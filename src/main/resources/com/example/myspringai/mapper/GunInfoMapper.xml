@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.myspringai.mapper.GunInfoMapper">
+
+    <resultMap id="BaseResultMap" type="com.example.myspringai.domain.GunInfo">
+            <id property="id" column="id" />
+            <result property="name" column="name" />
+            <result property="type" column="type" />
+            <result property="power" column="power" />
+            <result property="rateFire" column="rate_fire" />
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id,name,type,power,rate_fire
+    </sql>
+</mapper>

@@ -1,0 +1,60 @@
+spring:
+  ai:
+    openai:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode
+      api-key: ${OPENAI_API_KEY}
+      chat:
+        options:
+          model: qwen-max
+          temperature: 0.8
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:172.23.2.87}:${MYSQL_PORT:8003}/hussar_test?autoReconnect=true&useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&useTimezone=true&serverTimezone=GMT%2B8&allowMultiQueries=true
+    username: ${MYSQL_SERVICE_USER:root}
+    password: ${MYSQL_SERVICE_PASSWORD:123456}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  mybatis-plus:
+    mapper-locations: classpath*:/mapper/**/*.xml
+    type-aliases-package: com.example.myspringai.domain
+    configuration:
+      map-underscore-to-camel-case: true
+      cache-enabled: false
+
+  # RabbitMQ
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASS:guest}
+    listener:
+      simple:
+        acknowledge-mode: auto
+        retry:
+          enabled: false   # 重试由代码中的 RetryOperationsInterceptor 控制
+
+  # Redis
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+
+server:
+  port: 9999
+
+# =================== Dify 知识库配置 ===================
+#dify:
+#  api:
+#    base-url: ${DIFY_BASE_URL:http://localhost}
+#    key: ${DIFY_API_KEY:dataset-HDkuUMTBAv57uBDnws7xmNLc}
+#  dataset:
+#    id: ${DIFY_DATASET_ID:274ab0cd-5cc0-461d-b191-fff5f6b185f3}
+dify:
+  api:
+    base-url: ${DIFY_BASE_URL:http://172.31.173.145}
+    key: ${DIFY_API_KEY:dataset-JSV0hWQL7oX6F9HCsQ9fUSFj}
+  dataset:
+    id: ${DIFY_DATASET_ID:c0acf236-e5c2-488d-a8c3-ae52ea02cb6f}
