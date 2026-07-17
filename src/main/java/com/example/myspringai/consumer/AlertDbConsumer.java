@@ -18,8 +18,17 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 
 /**
- * 预警落库消费者 — 手动 ACK，确保消息不丢
+ * 预警落库消费者 — 手动 ACK + 重试（间隔2s共3次）→ DLQ
+ * <p>
+ * 手动 ACK 确保只有真正落库成功才确认；
+ * 重试拦截器处理瞬时故障（DB 连接抖动等）；
+ * 重试耗尽后进入 alarm.db.dlq 死信队列。
  */
+
+/**
+ * note:消费者默认是单线程的;多线程并发消费不会出现同一消息被两个线程同时拿到。RabbitMQ 通过消息独占分发机制保证了这一点。
+ */
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -30,11 +39,11 @@ public class AlertDbConsumer {
 
     @RabbitListener(
             queues = RabbitMQConfig.QUEUE_DB,
-            ackMode = "MANUAL"
+            containerFactory = "dbListenerContainerFactory"
     )
     public void handleDb(AlarmEvent event,
                          Channel channel,
-                         @Header(AmqpHeaders.DELIVERY_TAG) long tag) {
+                         @Header(AmqpHeaders.DELIVERY_TAG) long tag) throws Exception {
 
         try {
             AlertInfo info = AlertInfo.builder()
@@ -50,19 +59,17 @@ public class AlertDbConsumer {
 
             alertInfoMapper.insert(info);
             log.info("预警落库成功: alertId={}", event.getAlarmId());
-
-            // 手动确认
             channel.basicAck(tag, false);
 
         } catch (DuplicateKeyException e) {
-            // 唯一键冲突说明已有相同预警入库，直接 ACK
+            // 唯一键冲突 → 已有相同预警入库 → 直接 ACK
             log.info("重复预警入库(幂等兜底): alertId={}", event.getAlarmId());
-            ackQuietly(channel, tag);
+            channel.basicAck(tag, false);
 
         } catch (Exception e) {
-            log.error("预警落库失败，进入死信队列: alertId={}", event.getAlarmId(), e);
-            // requeue=false → 消息进入 DLQ，不会丢失
-            nackQuietly(channel, tag);
+            log.error("预警落库失败: alarmId={}", event.getAlarmId(), e);
+            // 抛出异常 → 重试拦截器接管 → 3次重试 → 仍失败则 DLQ
+            throw e;
         }
     }
 
@@ -71,20 +78,6 @@ public class AlertDbConsumer {
             return objectMapper.writeValueAsString(obj);
         } catch (Exception e) {
             return null;
-        }
-    }
-
-    private void ackQuietly(Channel channel, long tag) {
-        try {
-            channel.basicAck(tag, false);
-        } catch (IOException ignored) {
-        }
-    }
-
-    private void nackQuietly(Channel channel, long tag) {
-        try {
-            channel.basicNack(tag, false, false); // requeue=false → 进入死信队列
-        } catch (IOException ignored) {
         }
     }
 }

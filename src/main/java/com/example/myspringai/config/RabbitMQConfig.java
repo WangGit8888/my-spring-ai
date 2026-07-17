@@ -159,6 +159,18 @@ public class RabbitMQConfig {
     // ==================== 重试拦截器 ====================
 
     /**
+     * 落库：失败后重试 3 次，间隔 2 秒。全部失败则 reject → DLQ
+     */
+    @Bean
+    public RetryOperationsInterceptor dbRetryInterceptor() {
+        return RetryInterceptorBuilder.stateless()
+                .maxAttempts(4)
+                .backOffOptions(2000, 1.0, 2000)
+                .recoverer(new RejectAndDontRequeueRecoverer())
+                .build();
+    }
+
+    /**
      * 短信：失败后重试 3 次，每次间隔 5 秒。全部失败则 reject → DLQ
      */
     @Bean
@@ -182,7 +194,21 @@ public class RabbitMQConfig {
                 .build();
     }
 
-    // ==================== ListenerContainerFactory ====================
+    // ==================== ListenerContainerFactory（手动 ACK + 重试） ====================
+
+    @Bean
+    public RabbitListenerContainerFactory<?> dbListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            RetryOperationsInterceptor dbRetryInterceptor,
+            Jackson2JsonMessageConverter jackson2JsonMessageConverter) {
+
+        var factory = new org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory();
+        factory.setConnectionFactory(connectionFactory);
+        factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
+        factory.setMessageConverter(jackson2JsonMessageConverter);
+        factory.setAdviceChain(dbRetryInterceptor);
+        return factory;
+    }
 
     @Bean
     public RabbitListenerContainerFactory<?> smsListenerContainerFactory(
@@ -192,7 +218,7 @@ public class RabbitMQConfig {
 
         var factory = new org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory();
         factory.setConnectionFactory(connectionFactory);
-        factory.setAcknowledgeMode(AcknowledgeMode.AUTO);
+        factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
         factory.setMessageConverter(jackson2JsonMessageConverter);
         factory.setAdviceChain(smsRetryInterceptor);
         return factory;
@@ -206,7 +232,7 @@ public class RabbitMQConfig {
 
         var factory = new org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory();
         factory.setConnectionFactory(connectionFactory);
-        factory.setAcknowledgeMode(AcknowledgeMode.AUTO);
+        factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
         factory.setMessageConverter(jackson2JsonMessageConverter);
         factory.setAdviceChain(notifyRetryInterceptor);
         return factory;
