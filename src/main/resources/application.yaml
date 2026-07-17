@@ -25,6 +25,8 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USER:admin}
     password: ${RABBITMQ_PASS:admin123}
+    publisher-confirm-type: correlated  # 开启 publisher confirm，异步回调确保 broker 真正收到
+    publisher-returns: true             # 开启 return 回调，感知消息路由失败
     listener:
       simple:
         acknowledge-mode: auto

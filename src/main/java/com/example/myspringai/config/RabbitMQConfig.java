@@ -1,9 +1,11 @@
 package com.example.myspringai.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.*;
 import org.springframework.amqp.rabbit.config.RetryInterceptorBuilder;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.listener.RabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.retry.RejectAndDontRequeueRecoverer;
@@ -15,6 +17,7 @@ import org.springframework.retry.interceptor.RetryOperationsInterceptor;
 /**
  * RabbitMQ 配置：Topic Exchange + 3个队列 + 死信队列 + 重试拦截器
  */
+@Slf4j
 @Configuration
 public class RabbitMQConfig {
 
@@ -131,6 +134,25 @@ public class RabbitMQConfig {
                                          Jackson2JsonMessageConverter jackson2JsonMessageConverter) {
         RabbitTemplate template = new RabbitTemplate(connectionFactory);
         template.setMessageConverter(jackson2JsonMessageConverter);
+        // 消息无法路由到队列时触发（需要配合 mandatory=true + publisher-returns=true）
+        template.setMandatory(true);
+        template.setReturnsCallback(returned -> {
+            log.error("消息路由失败! exchange={}, routingKey={}, replyCode={}, replyText={}",
+                    returned.getExchange(), returned.getRoutingKey(),
+                    returned.getReplyCode(), returned.getReplyText());
+        });
+        // publisher confirm 回调：broker 真正收到消息后，完成 CorrelationData 里的 Future
+        template.setConfirmCallback((correlationData, ack, cause) -> {
+            if (correlationData != null) {
+                if (ack) {
+                    correlationData.getFuture().complete(
+                            new CorrelationData.Confirm(true, null));
+                } else {
+                    correlationData.getFuture().complete(
+                            new CorrelationData.Confirm(false, cause));
+                }
+            }
+        });
         return template;
     }
 
