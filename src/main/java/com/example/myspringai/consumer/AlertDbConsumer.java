@@ -60,8 +60,8 @@ public class AlertDbConsumer {
             ackQuietly(channel, tag);
 
         } catch (Exception e) {
-            log.error("预警落库失败: alertId={}", event.getAlarmId(), e);
-            // 其他异常 Nack 并重回队列
+            log.error("预警落库失败，进入死信队列: alertId={}", event.getAlarmId(), e);
+            // requeue=false → 消息进入 DLQ，不会丢失
             nackQuietly(channel, tag);
         }
     }
@@ -83,7 +83,7 @@ public class AlertDbConsumer {
 
     private void nackQuietly(Channel channel, long tag) {
         try {
-            channel.basicNack(tag, false, true); // requeue=true 重回队列
+            channel.basicNack(tag, false, false); // requeue=false → 进入死信队列
         } catch (IOException ignored) {
         }
     }

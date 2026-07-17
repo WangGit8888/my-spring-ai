@@ -1,5 +1,6 @@
 package com.example.myspringai.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.amqp.core.*;
 import org.springframework.amqp.rabbit.config.RetryInterceptorBuilder;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
@@ -25,8 +26,18 @@ public class RabbitMQConfig {
     public static final String ROUTING_KEY = "alarm.event";
 
     public static final String DLX_EXCHANGE = "alarm.dlx.exchange";
+    public static final String DLQ_DB = "alarm.db.dlq";
+    public static final String DLQ_NOTIFY = "alarm.notify.dlq";
     public static final String DLQ_SMS = "alarm.sms.dlq";
-    public static final String DLX_ROUTING_KEY = "alarm.sms.dlq";
+    public static final String DLX_RK_DB = "alarm.db.dlq";
+    public static final String DLX_RK_NOTIFY = "alarm.notify.dlq";
+    public static final String DLX_RK_SMS = "alarm.sms.dlq";
+
+
+    @Bean
+    public Jackson2JsonMessageConverter jackson2JsonMessageConverter(ObjectMapper objectMapper) {
+        return new Jackson2JsonMessageConverter(objectMapper);
+    }
 
     // ==================== Exchange ====================
 
@@ -44,21 +55,36 @@ public class RabbitMQConfig {
 
     @Bean
     public Queue alarmDbQueue() {
-        return QueueBuilder.durable(QUEUE_DB).build();
+        return QueueBuilder.durable(QUEUE_DB)
+                .deadLetterExchange(DLX_EXCHANGE)
+                .deadLetterRoutingKey(DLX_RK_DB)
+                .build();
     }
 
     @Bean
     public Queue alarmNotifyQueue() {
-        return QueueBuilder.durable(QUEUE_NOTIFY).build();
+        return QueueBuilder.durable(QUEUE_NOTIFY)
+                .deadLetterExchange(DLX_EXCHANGE)
+                .deadLetterRoutingKey(DLX_RK_NOTIFY)
+                .build();
     }
 
     @Bean
     public Queue alarmSmsQueue() {
-        // 短信队列绑定死信交换机，消费失败 N 次后进入 DLQ
         return QueueBuilder.durable(QUEUE_SMS)
                 .deadLetterExchange(DLX_EXCHANGE)
-                .deadLetterRoutingKey(DLX_ROUTING_KEY)
+                .deadLetterRoutingKey(DLX_RK_SMS)
                 .build();
+    }
+
+    @Bean
+    public Queue alarmDbDlq() {
+        return QueueBuilder.durable(DLQ_DB).build();
+    }
+
+    @Bean
+    public Queue alarmNotifyDlq() {
+        return QueueBuilder.durable(DLQ_NOTIFY).build();
     }
 
     @Bean
@@ -84,45 +110,83 @@ public class RabbitMQConfig {
     }
 
     @Bean
-    public Binding dlqBinding() {
-        return BindingBuilder.bind(alarmSmsDlq()).to(dlxExchange()).with(DLX_ROUTING_KEY);
+    public Binding dlqDbBinding() {
+        return BindingBuilder.bind(alarmDbDlq()).to(dlxExchange()).with(DLX_RK_DB);
+    }
+
+    @Bean
+    public Binding dlqNotifyBinding() {
+        return BindingBuilder.bind(alarmNotifyDlq()).to(dlxExchange()).with(DLX_RK_NOTIFY);
+    }
+
+    @Bean
+    public Binding dlqSmsBinding() {
+        return BindingBuilder.bind(alarmSmsDlq()).to(dlxExchange()).with(DLX_RK_SMS);
     }
 
     // ==================== JSON 序列化 ====================
 
     @Bean
-    public RabbitTemplate rabbitTemplate(ConnectionFactory connectionFactory) {
+    public RabbitTemplate rabbitTemplate(ConnectionFactory connectionFactory,
+                                         Jackson2JsonMessageConverter jackson2JsonMessageConverter) {
         RabbitTemplate template = new RabbitTemplate(connectionFactory);
-        template.setMessageConverter(new Jackson2JsonMessageConverter());
+        template.setMessageConverter(jackson2JsonMessageConverter);
         return template;
     }
 
-    // ==================== 短信重试拦截器 ====================
+    // ==================== 重试拦截器 ====================
 
     /**
-     * 失败后重试 3 次，每次间隔 5 秒。全部失败则 reject → 进入死信队列。
+     * 短信：失败后重试 3 次，每次间隔 5 秒。全部失败则 reject → DLQ
      */
     @Bean
     public RetryOperationsInterceptor smsRetryInterceptor() {
         return RetryInterceptorBuilder.stateless()
-                .maxAttempts(4)                          // 1次初始 + 3次重试
-                .backOffOptions(5000, 1.0, 5000)         // 初始5s, 乘数1.0, 最大5s（固定间隔）
-                .recoverer(new RejectAndDontRequeueRecoverer()) // 耗尽后不重回队列 → DLQ
+                .maxAttempts(4)
+                .backOffOptions(5000, 1.0, 5000)
+                .recoverer(new RejectAndDontRequeueRecoverer())
                 .build();
     }
 
     /**
-     * 短信队列使用独立的 ListenerContainerFactory，注入重试拦截器
+     * 站内信：失败后重试 3 次，每次间隔 5 秒。全部失败则 reject → DLQ
      */
+    @Bean
+    public RetryOperationsInterceptor notifyRetryInterceptor() {
+        return RetryInterceptorBuilder.stateless()
+                .maxAttempts(4)
+                .backOffOptions(5000, 1.0, 5000)
+                .recoverer(new RejectAndDontRequeueRecoverer())
+                .build();
+    }
+
+    // ==================== ListenerContainerFactory ====================
+
     @Bean
     public RabbitListenerContainerFactory<?> smsListenerContainerFactory(
             ConnectionFactory connectionFactory,
-            RetryOperationsInterceptor smsRetryInterceptor) {
+            RetryOperationsInterceptor smsRetryInterceptor,
+            Jackson2JsonMessageConverter jackson2JsonMessageConverter) {
 
         var factory = new org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory();
         factory.setConnectionFactory(connectionFactory);
         factory.setAcknowledgeMode(AcknowledgeMode.AUTO);
+        factory.setMessageConverter(jackson2JsonMessageConverter);
         factory.setAdviceChain(smsRetryInterceptor);
+        return factory;
+    }
+
+    @Bean
+    public RabbitListenerContainerFactory<?> notifyListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            RetryOperationsInterceptor notifyRetryInterceptor,
+            Jackson2JsonMessageConverter jackson2JsonMessageConverter) {
+
+        var factory = new org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory();
+        factory.setConnectionFactory(connectionFactory);
+        factory.setAcknowledgeMode(AcknowledgeMode.AUTO);
+        factory.setMessageConverter(jackson2JsonMessageConverter);
+        factory.setAdviceChain(notifyRetryInterceptor);
         return factory;
     }
 }
