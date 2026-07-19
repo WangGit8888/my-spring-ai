@@ -30,8 +30,6 @@ public class AlertServiceImpl implements AlertService {
     private static final Duration REDIS_TTL = Duration.ofHours(24);
     private static final DateTimeFormatter DT_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final long CONFIRM_TIMEOUT_SECONDS = 5;
-    private static final int SEND_MAX_RETRIES = 3;
-    private static final long SEND_RETRY_INTERVAL_MS = 2000;
 
     private final RedisTemplate<String, String> redisTemplate;
     private final RabbitTemplate rabbitTemplate;
@@ -73,56 +71,45 @@ public class AlertServiceImpl implements AlertService {
     }
 
     /**
-     * 发送到 MQ 并等待 broker 确认，失败自动重试，全部失败才抛异常
+     * 发送到 MQ 并等待 broker 确认。
+     * <p>
+     * 只发一次 convertAndSend，避免 confirm 超时时重复发送导致下游收到多条相同消息。
+     * confirm 超时或 Nack → 删 Redis → 抛异常 → 海康重试。
      */
     private void sendToMqWithConfirm(AlarmEvent event) {
-        for (int attempt = 0; attempt < SEND_MAX_RETRIES; attempt++) {
-            try {
-                CorrelationData correlationData = new CorrelationData();
-                rabbitTemplate.convertAndSend(
-                        RabbitMQConfig.EXCHANGE_ALARM,
-                        RabbitMQConfig.ROUTING_KEY,
-                        event,
-                        correlationData
-                );
-                CorrelationData.Confirm confirm = correlationData
-                        .getFuture().get(CONFIRM_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        CorrelationData correlationData = new CorrelationData();
 
-                if (confirm.isAck()) {
-                    return; // 成功，直接返回
-                }
-
-                log.warn("Broker Nack (第{}次/共{}次), alarmId={}, reason={}",
-                        attempt + 1, SEND_MAX_RETRIES,
-                        event.getAlarmId(), confirm.getReason());
-
-            } catch (java.util.concurrent.TimeoutException e) {
-                log.warn("等待MQ确认超时 (第{}次/共{}次), alarmId={}",
-                        attempt + 1, SEND_MAX_RETRIES, event.getAlarmId());
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new RuntimeException("等待MQ确认被中断", e);
-            } catch (java.util.concurrent.ExecutionException e) {
-                log.warn("MQ发送异常 (第{}次/共{}次), alarmId={}, error={}",
-                        attempt + 1, SEND_MAX_RETRIES,
-                        event.getAlarmId(), e.getCause().getMessage());
-            } catch (Exception e) {
-                log.warn("MQ发送失败 (第{}次/共{}次), alarmId={}, error={}",
-                        attempt + 1, SEND_MAX_RETRIES,
-                        event.getAlarmId(), e.getMessage());
-            }
-
-            // 非最后一次则等待后重试
-            if (attempt < SEND_MAX_RETRIES - 1) {
-                try {
-                    Thread.sleep(SEND_RETRY_INTERVAL_MS);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new RuntimeException("重试被中断", ie);
-                }
-            }
+        try {
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.EXCHANGE_ALARM,
+                    RabbitMQConfig.ROUTING_KEY,
+                    event,
+                    correlationData
+            );
+        } catch (Exception e) {
+            throw new RuntimeException("MQ发送失败(连接异常): " + e.getMessage(), e);
         }
-        throw new RuntimeException("MQ投递失败，已重试" + SEND_MAX_RETRIES + "次");
+
+        // 阻塞等待 broker 确认，超时 5 秒
+        try {
+            CorrelationData.Confirm confirm = correlationData
+                    .getFuture().get(CONFIRM_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+            if (!confirm.isAck()) {
+                throw new RuntimeException("Broker Nack: "
+                        + (confirm.getReason() != null ? confirm.getReason() : "未知原因"));
+            }
+            // ACK → 投递成功
+
+        } catch (java.util.concurrent.TimeoutException e) {
+            throw new RuntimeException("等待MQ确认超时(" + CONFIRM_TIMEOUT_SECONDS + "s)"
+                    + "，消息可能已发送，由海康重试兜底", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("等待MQ确认被中断", e);
+        } catch (java.util.concurrent.ExecutionException e) {
+            throw new RuntimeException("MQ确认异常: " + e.getCause().getMessage(), e.getCause());
+        }
     }
 
     /**
@@ -145,6 +132,7 @@ public class AlertServiceImpl implements AlertService {
                 .alarmTime(alarmTime)
                 .deviceId(req.getDeviceId())
                 .deviceName(req.getDeviceName())
+                .alarmLevel(req.getAlarmLevel() != null ? req.getAlarmLevel() : 1)
                 .rawData(mergeRawData(req))
                 .receiveTime(LocalDateTime.now())
                 .build();

@@ -28,6 +28,9 @@ public class HikvisionAlarmRequest {
     /** 设备名称 */
     private String deviceName;
 
+    /** 预警等级：1-轻微 2-中等 3-严重 */
+    private Integer alarmLevel;
+
     /** 接收海康推送的全部原始字段（兜底） */
     private Map<String, Object> rawData;
 }

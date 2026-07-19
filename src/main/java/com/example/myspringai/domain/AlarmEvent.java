@@ -36,6 +36,9 @@ public class AlarmEvent implements Serializable {
     /** 设备名称 */
     private String deviceName;
 
+    /** 预警等级：1-轻微 2-中等 3-严重 */
+    private Integer alarmLevel;
+
     /** 海康推送的原始数据 */
     private Map<String, Object> rawData;
 
