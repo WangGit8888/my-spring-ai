@@ -225,7 +225,7 @@ public class RabbitMQConfig {
     }
 
     /**
-     * 短信：HTTP 调用慢（~50ms），重试长（5s×3），配高并发 + 大预取
+     * 短信：AUTO ack + 重试拦截器，抛异常自动重试，耗尽进 DLQ
      */
     @Bean
     public RabbitListenerContainerFactory<?> smsListenerContainerFactory(
@@ -235,7 +235,7 @@ public class RabbitMQConfig {
 
         var factory = new org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory();
         factory.setConnectionFactory(connectionFactory);
-        factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
+        factory.setAcknowledgeMode(AcknowledgeMode.AUTO);
         factory.setMessageConverter(jackson2JsonMessageConverter);
         factory.setAdviceChain(smsRetryInterceptor);
         factory.setConcurrentConsumers(60);
@@ -244,7 +244,7 @@ public class RabbitMQConfig {
     }
 
     /**
-     * 站内信：同短信，HTTP 调用慢，重试长，配高并发
+     * 站内信：AUTO ack + 重试拦截器，抛异常自动重试，耗尽进 DLQ
      */
     @Bean
     public RabbitListenerContainerFactory<?> notifyListenerContainerFactory(
@@ -254,7 +254,7 @@ public class RabbitMQConfig {
 
         var factory = new org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory();
         factory.setConnectionFactory(connectionFactory);
-        factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
+        factory.setAcknowledgeMode(AcknowledgeMode.AUTO);
         factory.setMessageConverter(jackson2JsonMessageConverter);
         factory.setAdviceChain(notifyRetryInterceptor);
         factory.setConcurrentConsumers(60);
