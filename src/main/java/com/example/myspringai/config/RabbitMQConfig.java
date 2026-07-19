@@ -36,6 +36,10 @@ public class RabbitMQConfig {
     public static final String DLX_RK_NOTIFY = "alarm.notify.dlq";
     public static final String DLX_RK_SMS = "alarm.sms.dlq";
 
+    /** 落库成功后的事件交换机，下游通知服务只监听这个 */
+    public static final String EXCHANGE_PERSISTED = "alarm.persisted.exchange";
+    public static final String ROUTING_KEY_PERSISTED = "alarm.persisted";
+
 
     @Bean
     public Jackson2JsonMessageConverter jackson2JsonMessageConverter(ObjectMapper objectMapper) {
@@ -47,6 +51,11 @@ public class RabbitMQConfig {
     @Bean
     public TopicExchange alarmExchange() {
         return new TopicExchange(EXCHANGE_ALARM);
+    }
+
+    @Bean
+    public TopicExchange persistedExchange() {
+        return new TopicExchange(EXCHANGE_PERSISTED);
     }
 
     @Bean
@@ -104,12 +113,12 @@ public class RabbitMQConfig {
 
     @Bean
     public Binding notifyBinding() {
-        return BindingBuilder.bind(alarmNotifyQueue()).to(alarmExchange()).with(ROUTING_KEY);
+        return BindingBuilder.bind(alarmNotifyQueue()).to(persistedExchange()).with(ROUTING_KEY_PERSISTED);
     }
 
     @Bean
     public Binding smsBinding() {
-        return BindingBuilder.bind(alarmSmsQueue()).to(alarmExchange()).with(ROUTING_KEY);
+        return BindingBuilder.bind(alarmSmsQueue()).to(persistedExchange()).with(ROUTING_KEY_PERSISTED);
     }
 
     @Bean
