@@ -1,14 +1,15 @@
 package com.example.myspringai.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.example.myspringai.jiami.AesUtil;
+import com.example.myspringai.domain.AlertInfo;
 import com.example.myspringai.domain.HikvisionAlarmRequest;
+import com.example.myspringai.mapper.AlertInfoMapper;
 import com.example.myspringai.service.AlertService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
@@ -22,6 +23,8 @@ import java.util.Map;
 public class AlertController {
 
     private final AlertService alertService;
+    private final AlertInfoMapper alertInfoMapper;
+    private final AesUtil aesUtil;
 
     /**
      * 接收海康 ISC 平台推送的预警。
@@ -50,5 +53,15 @@ public class AlertController {
                     "message", "处理失败: " + e.getMessage()
             ));
         }
+    }
+
+    @GetMapping("/getAlertById")
+    public void getAlertById(@RequestParam("alarmId")Long alarmId) {
+
+        AlertInfo alertInfo = alertInfoMapper.selectOne(
+                new LambdaQueryWrapper<AlertInfo>().eq(AlertInfo::getAlertId, alarmId)
+        );
+//        alertInfo.setDeviceName(aesUtil.decrypt(alertInfo.getDeviceName()));
+        System.out.println(alertInfo);
     }
 }

@@ -194,8 +194,11 @@ public class RabbitMQConfig {
                 .build();
     }
 
-    // ==================== ListenerContainerFactory（手动 ACK + 重试） ====================
+    // ==================== ListenerContainerFactory（手动 ACK + 重试 + 多线程） ====================
 
+    /**
+     * 落库：DB 操作快（~20ms），重试短（2s×3），配中等并发
+     */
     @Bean
     public RabbitListenerContainerFactory<?> dbListenerContainerFactory(
             ConnectionFactory connectionFactory,
@@ -207,9 +210,14 @@ public class RabbitMQConfig {
         factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
         factory.setMessageConverter(jackson2JsonMessageConverter);
         factory.setAdviceChain(dbRetryInterceptor);
+        factory.setConcurrentConsumers(25);
+        factory.setPrefetchCount(80);
         return factory;
     }
 
+    /**
+     * 短信：HTTP 调用慢（~50ms），重试长（5s×3），配高并发 + 大预取
+     */
     @Bean
     public RabbitListenerContainerFactory<?> smsListenerContainerFactory(
             ConnectionFactory connectionFactory,
@@ -221,9 +229,14 @@ public class RabbitMQConfig {
         factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
         factory.setMessageConverter(jackson2JsonMessageConverter);
         factory.setAdviceChain(smsRetryInterceptor);
+        factory.setConcurrentConsumers(60);
+        factory.setPrefetchCount(80);
         return factory;
     }
 
+    /**
+     * 站内信：同短信，HTTP 调用慢，重试长，配高并发
+     */
     @Bean
     public RabbitListenerContainerFactory<?> notifyListenerContainerFactory(
             ConnectionFactory connectionFactory,
@@ -235,6 +248,8 @@ public class RabbitMQConfig {
         factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
         factory.setMessageConverter(jackson2JsonMessageConverter);
         factory.setAdviceChain(notifyRetryInterceptor);
+        factory.setConcurrentConsumers(60);
+        factory.setPrefetchCount(80);
         return factory;
     }
 }

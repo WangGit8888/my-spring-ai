@@ -1,8 +1,10 @@
 package com.example.myspringai.domain;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.example.myspringai.jiami.CryptoTypeHandler;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -38,7 +40,8 @@ public class AlertInfo {
     /** 设备ID */
     private String deviceId;
 
-    /** 设备名称 */
+    /** 设备名称（自动加解密） */
+    @TableField(typeHandler = CryptoTypeHandler.class)
     private String deviceName;
 
     /** 原始推送数据JSON */

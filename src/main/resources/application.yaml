@@ -20,7 +20,7 @@ spring:
     configuration:
       map-underscore-to-camel-case: true
       cache-enabled: false
-
+      log-impl: org.apache.ibatis.logging.stdout.StdOutImpl  # 👈 开启 SQL 打印
   # RabbitMQ
   rabbitmq:
     host: ${RABBITMQ_HOST:localhost}
@@ -61,3 +61,7 @@ dify:
     key: ${DIFY_API_KEY:dataset-JSV0hWQL7oX6F9HCsQ9fUSFj}
   dataset:
     id: ${DIFY_DATASET_ID:c0acf236-e5c2-488d-a8c3-ae52ea02cb6f}
+
+app:
+  crypto:
+    key: abcdefghijklmnopqrstuvwxyz123456  # 32个字符
