@@ -21,30 +21,6 @@ spring:
       map-underscore-to-camel-case: true
       cache-enabled: false
       log-impl: org.apache.ibatis.logging.stdout.StdOutImpl  # 👈 开启 SQL 打印
-  # RabbitMQ
-  rabbitmq:
-    host: ${RABBITMQ_HOST:localhost}
-    port: ${RABBITMQ_PORT:5672}
-    username: ${RABBITMQ_USER:admin}
-    password: ${RABBITMQ_PASS:admin123}
-    publisher-confirm-type: correlated  # 开启 publisher confirm，异步回调确保 broker 真正收到
-    publisher-returns: true             # 开启 return 回调，感知消息路由失败(解决的是配置错误,而不是网络故障,一般不开)
-    listener:
-      simple:
-        acknowledge-mode: manual  # 手动 ACK，各消费者通过自定义工厂的 RetryOperationsInterceptor 控制重试
-        retry:
-          enabled: false   # 重试由代码中的 RetryOperationsInterceptor 控制
-
-  # Redis
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
-      lettuce:
-        pool:
-          max-active: 8
-          max-idle: 8
-          min-idle: 0
 
 
 

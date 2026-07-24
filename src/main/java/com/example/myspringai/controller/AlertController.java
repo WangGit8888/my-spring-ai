@@ -1,7 +1,6 @@
 package com.example.myspringai.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.example.myspringai.jiami.AesUtil;
 import com.example.myspringai.domain.AlertInfo;
 import com.example.myspringai.domain.HikvisionAlarmRequest;
 import com.example.myspringai.mapper.AlertInfoMapper;
@@ -24,11 +23,10 @@ public class AlertController {
 
     private final AlertService alertService;
     private final AlertInfoMapper alertInfoMapper;
-    private final AesUtil aesUtil;
 
     /**
      * 接收海康 ISC 平台推送的预警。
-     * 幂等校验后发 MQ，立即返回 200，响应时间控制在 120ms 左右。
+     * 直接落库（唯一索引幂等），通知/短信由定时任务异步发送，响应时间 ~5ms。
      */
     @PostMapping("/alarm")
     public ResponseEntity<?> receiveAlarm(@RequestBody HikvisionAlarmRequest request) {
@@ -56,12 +54,10 @@ public class AlertController {
     }
 
     @GetMapping("/getAlertById")
-    public void getAlertById(@RequestParam("alarmId")Long alarmId) {
-
+    public void getAlertById(@RequestParam("alarmId") Long alarmId) {
         AlertInfo alertInfo = alertInfoMapper.selectOne(
                 new LambdaQueryWrapper<AlertInfo>().eq(AlertInfo::getAlertId, alarmId)
         );
-//        alertInfo.setDeviceName(aesUtil.decrypt(alertInfo.getDeviceName()));
         System.out.println(alertInfo);
     }
 }
