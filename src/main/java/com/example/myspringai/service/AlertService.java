@@ -16,8 +16,5 @@ public interface AlertService {
      */
     boolean handleAlarm(HikvisionAlarmRequest request);
 
-    /**
-     * 发送预警事件到 RabbitMQ Topic Exchange
-     */
-    void sendToMq(AlarmEvent event);
+
 }

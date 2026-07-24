@@ -60,16 +60,6 @@ public class AlertServiceImpl implements AlertService {
         }
     }
 
-    @Override
-    public void sendToMq(AlarmEvent event) {
-        // 简单发送，不等待 confirm（供其他不需要确认的场景使用）
-        rabbitTemplate.convertAndSend(
-                RabbitMQConfig.EXCHANGE_ALARM,
-                RabbitMQConfig.ROUTING_KEY,
-                event
-        );
-    }
-
     /**
      * 发送到 MQ 并等待 broker 确认。
      * <p>
