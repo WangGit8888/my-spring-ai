@@ -41,8 +41,8 @@ public class AlertNotifyConsumer {
             // Level 3：立即发送，成功才 ACK，失败抛异常让重试拦截器接管
             try {
                 sendImmediately(event);
+                channel.basicAck(tag, false); // 发送成功立刻ACK，避免MQ重试导致重复发送
                 markNotifySuccess(event.getAlarmId());
-                channel.basicAck(tag, false);
                 log.info("[站内信·紧急] 发送成功: alarmId={}", event.getAlarmId());
             } catch (Exception e) {
                 log.error("[站内信·紧急] 发送失败，等待重试: alarmId={}", event.getAlarmId(), e);

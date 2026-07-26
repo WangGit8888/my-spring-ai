@@ -51,19 +51,23 @@ public class AlertServiceImpl implements AlertService {
             return false;
         }
 
-        // 2. 落库成功 → 发 MQ（快路径，通知和短信各自消费）
-        //    失败不抛异常，定时任务兜底扫描 PENDING 记录
-        AlarmEvent event = buildEvent(request);
-        try {
-            rabbitTemplate.convertAndSend(
-                    RabbitMQConfig.EXCHANGE_ALARM,
-                    RabbitMQConfig.ROUTING_KEY,
-                    event
-            );
-            log.info("预警已入库并投递MQ: alarmId={}, level={}", alarmId, info.getAlertLevel());
-        } catch (Exception e) {
-            log.error("MQ投递失败(定时任务将兜底): alarmId={}", alarmId, e);
-            // 不抛异常，DB 里 notify_status/sms_status 都是 PENDING，定时任务会处理
+        // 2. Level 3 走 MQ 快路径（~ms 级推送），Level 1/2 由定时任务批量发送
+        //    MQ 发送失败不抛异常，定时任务兜底扫描 PENDING 记录
+        int level = info.getAlertLevel();
+        if (level >= 3) {
+            AlarmEvent event = buildEvent(request);
+            try {
+                rabbitTemplate.convertAndSend(
+                        RabbitMQConfig.EXCHANGE_ALARM,
+                        RabbitMQConfig.ROUTING_KEY,
+                        event
+                );
+                log.info("预警已入库并投递MQ: alarmId={}, level={}", alarmId, level);
+            } catch (Exception e) {
+                log.error("MQ投递失败(定时任务将兜底): alarmId={}", alarmId, e);
+            }
+        } else {
+            log.info("预警已入库(等待定时任务批量发送): alarmId={}, level={}", alarmId, level);
         }
 
         return true;
