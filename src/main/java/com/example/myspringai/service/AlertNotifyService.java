@@ -12,55 +12,83 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 站内信兜底服务。
+ * 站内信批量发送服务 — DB 驱动攒批，无内存缓冲区。
  * <p>
- * MQ 消费者 AlertNotifyConsumer 是快路径（~ms 级），本服务是慢路径兜底。
- * 只扫描 createTime 超过 60 秒仍为 PENDING 的记录——说明 MQ 消费者没处理到
- * （可能是 MQ publish 失败、消费者崩溃、JVM 内存缓冲区丢失等）。
+ * MQ 消费者 AlertNotifyConsumer 只处理 Level 3 立即发送。<br>
+ * Level 1/2 的批量发送全部由本服务负责：扫描 PENDING 超过 30s 的记录，合并发送。
  * <p>
- * 正常情况本服务几乎不干活，但能保证 100% 不丢消息。
+ * 同时兜底 Level 3 超过 60s 仍 PENDING 的记录（MQ 消费者重试耗尽进 DLQ 的情况）。
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class AlertNotifyService {
 
-    private static final int BATCH_LIMIT = 100;
-    /** MQ 消费者兜底窗口：只处理超过 60 秒还没发出去的 */
-    private static final int FALLBACK_WINDOW_SECONDS = 60;
+    private static final int BATCH_LIMIT = 200;
+    private static final int BATCH_WINDOW_SECONDS = 30;
+    private static final int FALLBACK_SECONDS = 60;
 
     private final AlertInfoMapper alertInfoMapper;
 
-    @Scheduled(fixedDelay = 10_000)
-    public void fallbackScan() {
-        List<AlertInfo> pendingList = alertInfoMapper.selectList(
+    /**
+     * 每 5 秒扫描一次
+     */
+    @Scheduled(fixedDelay = 5_000)
+    public void processPendingNotifications() {
+
+        // 1. Level 1/2：攒到 30 秒后批量发送（主路径）
+        List<AlertInfo> batchList = alertInfoMapper.selectList(
                 new LambdaQueryWrapper<AlertInfo>()
                         .eq(AlertInfo::getNotifyStatus, "PENDING")
-                        .lt(AlertInfo::getCreateTime, LocalDateTime.now().minusSeconds(FALLBACK_WINDOW_SECONDS))
+                        .lt(AlertInfo::getAlertLevel, 3)
+                        .lt(AlertInfo::getCreateTime, LocalDateTime.now().minusSeconds(BATCH_WINDOW_SECONDS))
                         .last("LIMIT " + BATCH_LIMIT)
         );
-
-        if (pendingList.isEmpty()) return;
-
-        log.warn("[站内信·兜底] MQ消费者超时未处理，兜底扫描到 {} 条，尝试发送", pendingList.size());
-
-        for (AlertInfo alert : pendingList) {
+        if (!batchList.isEmpty()) {
             try {
-                // Level 3 立即发，Level 1/2 也是逐条发（兜底不攒批）
-                sendFallback(alert);
+                sendBatch(batchList);
+                for (AlertInfo alert : batchList) {
+                    alert.setNotifyStatus("SUCCESS");
+                    alertInfoMapper.updateById(alert);
+                }
+                log.info("[站内信·批量] 发送成功: {} 条", batchList.size());
+            } catch (Exception e) {
+                log.error("[站内信·批量] 发送失败，等待下次重试: count={}", batchList.size(), e);
+                // 不更新状态，下次轮询自动重试
+            }
+        }
+
+        // 2. Level 3 兜底：超过 60s 仍 PENDING（MQ 消费者处理失败进 DLQ 了）
+        List<AlertInfo> fallbackList = alertInfoMapper.selectList(
+                new LambdaQueryWrapper<AlertInfo>()
+                        .eq(AlertInfo::getNotifyStatus, "PENDING")
+                        .ge(AlertInfo::getAlertLevel, 3)
+                        .lt(AlertInfo::getCreateTime, LocalDateTime.now().minusSeconds(FALLBACK_SECONDS))
+                        .last("LIMIT " + BATCH_LIMIT)
+        );
+        for (AlertInfo alert : fallbackList) {
+            try {
+                sendImmediately(alert);
                 alert.setNotifyStatus("SUCCESS");
                 alertInfoMapper.updateById(alert);
+                log.warn("[站内信·兜底] Level3超时未发，兜底发送成功: alarmId={}", alert.getAlertId());
             } catch (Exception e) {
                 log.error("[站内信·兜底] 发送失败: alarmId={}", alert.getAlertId(), e);
-                // 不更新状态，下次继续重试
             }
         }
     }
 
-    private void sendFallback(AlertInfo alert) {
+    private void sendImmediately(AlertInfo alert) {
         // TODO: 对接站内信服务发送通知
-        log.info("[站内信·兜底] 发送: alarmId={}, type={}, level={}, device={}",
+        log.info("[站内信·紧急] 发送: alarmId={}, type={}, level={}, device={}",
                 alert.getAlertId(), alert.getAlertType(),
                 alert.getAlertLevel(), alert.getDeviceName());
+    }
+
+    private void sendBatch(List<AlertInfo> batch) {
+        // TODO: 对接站内信批量发送接口
+        log.info("[站内信·批量] 合并发送 {} 条预警: {}",
+                batch.size(),
+                batch.stream().map(AlertInfo::getAlertId).toList());
     }
 }

@@ -1,7 +1,6 @@
 package com.example.myspringai.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.*;
 import org.springframework.amqp.rabbit.config.RetryInterceptorBuilder;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
@@ -17,9 +16,11 @@ import org.springframework.retry.interceptor.RetryOperationsInterceptor;
  * RabbitMQ 配置：1 个 Topic Exchange + 2 个队列（通知 + 短信）+ 死信 + 重试。
  * <p>
  * 入口落库后发到 alarm.exchange，通知和短信各自独立消费，互不影响。
- * 定时任务 AlertNotifyService / AlertSmsService 兜底扫描超时未发送的记录。
+ * <p>
+ * 消费者采用 MANUAL ACK：<br>
+ * Level 3 → 发送成功 ACK，失败抛异常 → 重试拦截器重试 3 次 → 耗尽进 DLQ<br>
+ * Level 1/2 → 直接 ACK，DB 保持 PENDING，由定时任务批量发送
  */
-@Slf4j
 @Configuration
 public class RabbitMQConfig {
 
@@ -116,7 +117,7 @@ public class RabbitMQConfig {
 
     // ==================== 重试拦截器 ====================
 
-    /** 站内信：失败重试 3 次，间隔 5 秒，耗尽进 DLQ */
+    /** 站内信：失败重试 3 次，间隔 5 秒，耗尽 reject → DLQ */
     @Bean
     public RetryOperationsInterceptor notifyRetryInterceptor() {
         return RetryInterceptorBuilder.stateless()
@@ -126,7 +127,7 @@ public class RabbitMQConfig {
                 .build();
     }
 
-    /** 短信：失败重试 3 次，间隔 5 秒，耗尽进 DLQ */
+    /** 短信：失败重试 3 次，间隔 5 秒，耗尽 reject → DLQ */
     @Bean
     public RetryOperationsInterceptor smsRetryInterceptor() {
         return RetryInterceptorBuilder.stateless()
@@ -136,9 +137,9 @@ public class RabbitMQConfig {
                 .build();
     }
 
-    // ==================== ListenerContainerFactory ====================
+    // ==================== ListenerContainerFactory（MANUAL ACK） ====================
 
-    /** 站内信：AUTO ack + 重试 + 60 并发 */
+    /** 站内信：MANUAL ack + 重试拦截器 + 60 并发 */
     @Bean
     public RabbitListenerContainerFactory<?> notifyListenerContainerFactory(
             ConnectionFactory connectionFactory,
@@ -147,7 +148,7 @@ public class RabbitMQConfig {
 
         var factory = new org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory();
         factory.setConnectionFactory(connectionFactory);
-        factory.setAcknowledgeMode(AcknowledgeMode.AUTO);
+        factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
         factory.setMessageConverter(jackson2JsonMessageConverter);
         factory.setAdviceChain(notifyRetryInterceptor);
         factory.setConcurrentConsumers(60);
@@ -155,7 +156,7 @@ public class RabbitMQConfig {
         return factory;
     }
 
-    /** 短信：AUTO ack + 重试 + 60 并发 */
+    /** 短信：MANUAL ack + 重试拦截器 + 60 并发 */
     @Bean
     public RabbitListenerContainerFactory<?> smsListenerContainerFactory(
             ConnectionFactory connectionFactory,
@@ -164,7 +165,7 @@ public class RabbitMQConfig {
 
         var factory = new org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory();
         factory.setConnectionFactory(connectionFactory);
-        factory.setAcknowledgeMode(AcknowledgeMode.AUTO);
+        factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
         factory.setMessageConverter(jackson2JsonMessageConverter);
         factory.setAdviceChain(smsRetryInterceptor);
         factory.setConcurrentConsumers(60);
