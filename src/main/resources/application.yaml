@@ -21,6 +21,12 @@ spring:
       map-underscore-to-camel-case: true
       cache-enabled: false
       log-impl: org.apache.ibatis.logging.stdout.StdOutImpl  # 👈 开启 SQL 打印
+  # RabbitMQ
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:admin}
+    password: ${RABBITMQ_PASS:admin123}
 
 
 

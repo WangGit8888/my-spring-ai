@@ -12,12 +12,13 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 短信通知服务 — 定时轮询 DB 发送：
+ * 短信兜底服务。
  * <p>
- * Level 3（严重）→ 立即发送<br>
- * Level 1/2（轻微/中等）→ 攒到 60 秒后批量发送（短信成本高，攒久一点）
+ * MQ 消费者 AlertSmsConsumer 是快路径（~ms 级），本服务是慢路径兜底。
+ * 只扫描 createTime 超过 120 秒仍为 PENDING 的记录——短信发送慢、批次窗口大（60s），
+ * 兜底窗口也相应放宽。
  * <p>
- * 发送失败不更新状态，下次轮询自动重试。没有任何消息丢失风险。
+ * 正常情况本服务几乎不干活，但能保证 100% 不丢消息。
  */
 @Slf4j
 @Component
@@ -25,67 +26,40 @@ import java.util.List;
 public class AlertSmsService {
 
     private static final int BATCH_LIMIT = 100;
-    private static final int BATCH_WINDOW_SECONDS = 60;
+    /** MQ 消费者兜底窗口：短信批次最大 60s，兜底给到 120s */
+    private static final int FALLBACK_WINDOW_SECONDS = 120;
 
     private final AlertInfoMapper alertInfoMapper;
 
-    /**
-     * 每 3 秒扫描一次待发送的短信
-     */
-    @Scheduled(fixedDelay = 3000)
-    public void processPendingSms() {
-
-        // 1. Level 3（严重）：立即发送
-        List<AlertInfo> urgentList = alertInfoMapper.selectList(
+    @Scheduled(fixedDelay = 15_000)
+    public void fallbackScan() {
+        List<AlertInfo> pendingList = alertInfoMapper.selectList(
                 new LambdaQueryWrapper<AlertInfo>()
                         .eq(AlertInfo::getSmsStatus, "PENDING")
-                        .ge(AlertInfo::getAlertLevel, 3)
+                        .lt(AlertInfo::getCreateTime, LocalDateTime.now().minusSeconds(FALLBACK_WINDOW_SECONDS))
                         .last("LIMIT " + BATCH_LIMIT)
         );
-        for (AlertInfo alert : urgentList) {
+
+        if (pendingList.isEmpty()) return;
+
+        log.warn("[短信·兜底] MQ消费者超时未处理，兜底扫描到 {} 条，尝试发送", pendingList.size());
+
+        for (AlertInfo alert : pendingList) {
             try {
-                sendImmediately(alert);
+                sendFallback(alert);
                 alert.setSmsStatus("SUCCESS");
                 alertInfoMapper.updateById(alert);
             } catch (Exception e) {
-                log.error("[短信·紧急] 发送失败，等待下次重试: alarmId={}", alert.getAlertId(), e);
-                // 不更新状态 → 下次轮询自动重试
-            }
-        }
-
-        // 2. Level 1/2（轻微/中等）：超过 60 秒的批量发送
-        List<AlertInfo> batchList = alertInfoMapper.selectList(
-                new LambdaQueryWrapper<AlertInfo>()
-                        .eq(AlertInfo::getSmsStatus, "PENDING")
-                        .lt(AlertInfo::getAlertLevel, 3)
-                        .lt(AlertInfo::getCreateTime, LocalDateTime.now().minusSeconds(BATCH_WINDOW_SECONDS))
-                        .last("LIMIT " + BATCH_LIMIT)
-        );
-        if (!batchList.isEmpty()) {
-            try {
-                sendBatch(batchList);
-                for (AlertInfo alert : batchList) {
-                    alert.setSmsStatus("SUCCESS");
-                    alertInfoMapper.updateById(alert);
-                }
-            } catch (Exception e) {
-                log.error("[短信·批量] 发送失败，等待下次重试: count={}", batchList.size(), e);
-                // 不更新状态 → 下次轮询自动重试
+                log.error("[短信·兜底] 发送失败: alarmId={}", alert.getAlertId(), e);
+                // 不更新状态，下次继续重试
             }
         }
     }
 
-    private void sendImmediately(AlertInfo alert) {
+    private void sendFallback(AlertInfo alert) {
         // TODO: 对接短信服务发送短信
-        log.info("[短信·紧急] 立即发送: alarmId={}, type={}, level={}, device={}",
+        log.info("[短信·兜底] 发送: alarmId={}, type={}, level={}, device={}",
                 alert.getAlertId(), alert.getAlertType(),
                 alert.getAlertLevel(), alert.getDeviceName());
-    }
-
-    private void sendBatch(List<AlertInfo> batch) {
-        // TODO: 对接短信批量发送接口
-        log.info("[短信·批量] 合并发送 {} 条预警: {}",
-                batch.size(),
-                batch.stream().map(AlertInfo::getAlertId).toList());
     }
 }

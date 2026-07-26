@@ -12,12 +12,13 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 站内信通知服务 — 定时轮询 DB 发送：
+ * 站内信兜底服务。
  * <p>
- * Level 3（严重）→ 立即发送<br>
- * Level 1/2（轻微/中等）→ 攒到 30 秒后批量发送
+ * MQ 消费者 AlertNotifyConsumer 是快路径（~ms 级），本服务是慢路径兜底。
+ * 只扫描 createTime 超过 60 秒仍为 PENDING 的记录——说明 MQ 消费者没处理到
+ * （可能是 MQ publish 失败、消费者崩溃、JVM 内存缓冲区丢失等）。
  * <p>
- * 发送失败不更新状态，下次轮询自动重试。没有任何消息丢失风险。
+ * 正常情况本服务几乎不干活，但能保证 100% 不丢消息。
  */
 @Slf4j
 @Component
@@ -25,67 +26,41 @@ import java.util.List;
 public class AlertNotifyService {
 
     private static final int BATCH_LIMIT = 100;
-    private static final int BATCH_WINDOW_SECONDS = 30;
+    /** MQ 消费者兜底窗口：只处理超过 60 秒还没发出去的 */
+    private static final int FALLBACK_WINDOW_SECONDS = 60;
 
     private final AlertInfoMapper alertInfoMapper;
 
-    /**
-     * 每 3 秒扫描一次待发送的站内信
-     */
-    @Scheduled(fixedDelay = 3000)
-    public void processPendingNotifications() {
-
-        // 1. Level 3（严重）：立即发送
-        List<AlertInfo> urgentList = alertInfoMapper.selectList(
+    @Scheduled(fixedDelay = 10_000)
+    public void fallbackScan() {
+        List<AlertInfo> pendingList = alertInfoMapper.selectList(
                 new LambdaQueryWrapper<AlertInfo>()
                         .eq(AlertInfo::getNotifyStatus, "PENDING")
-                        .ge(AlertInfo::getAlertLevel, 3)
+                        .lt(AlertInfo::getCreateTime, LocalDateTime.now().minusSeconds(FALLBACK_WINDOW_SECONDS))
                         .last("LIMIT " + BATCH_LIMIT)
         );
-        for (AlertInfo alert : urgentList) {
+
+        if (pendingList.isEmpty()) return;
+
+        log.warn("[站内信·兜底] MQ消费者超时未处理，兜底扫描到 {} 条，尝试发送", pendingList.size());
+
+        for (AlertInfo alert : pendingList) {
             try {
-                sendImmediately(alert);
+                // Level 3 立即发，Level 1/2 也是逐条发（兜底不攒批）
+                sendFallback(alert);
                 alert.setNotifyStatus("SUCCESS");
                 alertInfoMapper.updateById(alert);
             } catch (Exception e) {
-                log.error("[站内信·紧急] 发送失败，等待下次重试: alarmId={}", alert.getAlertId(), e);
-                // 不更新状态 → 下次轮询自动重试
-            }
-        }
-
-        // 2. Level 1/2（轻微/中等）：超过 30 秒的批量发送
-        List<AlertInfo> batchList = alertInfoMapper.selectList(
-                new LambdaQueryWrapper<AlertInfo>()
-                        .eq(AlertInfo::getNotifyStatus, "PENDING")
-                        .lt(AlertInfo::getAlertLevel, 3)
-                        .lt(AlertInfo::getCreateTime, LocalDateTime.now().minusSeconds(BATCH_WINDOW_SECONDS))
-                        .last("LIMIT " + BATCH_LIMIT)
-        );
-        if (!batchList.isEmpty()) {
-            try {
-                sendBatch(batchList);
-                for (AlertInfo alert : batchList) {
-                    alert.setNotifyStatus("SUCCESS");
-                    alertInfoMapper.updateById(alert);
-                }
-            } catch (Exception e) {
-                log.error("[站内信·批量] 发送失败，等待下次重试: count={}", batchList.size(), e);
-                // 不更新状态 → 下次轮询自动重试
+                log.error("[站内信·兜底] 发送失败: alarmId={}", alert.getAlertId(), e);
+                // 不更新状态，下次继续重试
             }
         }
     }
 
-    private void sendImmediately(AlertInfo alert) {
+    private void sendFallback(AlertInfo alert) {
         // TODO: 对接站内信服务发送通知
-        log.info("[站内信·紧急] 立即发送: alarmId={}, type={}, level={}, device={}",
+        log.info("[站内信·兜底] 发送: alarmId={}, type={}, level={}, device={}",
                 alert.getAlertId(), alert.getAlertType(),
                 alert.getAlertLevel(), alert.getDeviceName());
-    }
-
-    private void sendBatch(List<AlertInfo> batch) {
-        // TODO: 对接站内信批量发送接口
-        log.info("[站内信·批量] 合并发送 {} 条预警: {}",
-                batch.size(),
-                batch.stream().map(AlertInfo::getAlertId).toList());
     }
 }
